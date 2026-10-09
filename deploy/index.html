@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="data:,">
+<title>提琴工坊 · 装弦 · 调音 · 演奏</title>
+<style>
+  :root {
+    --ink: #f6ecdc;
+    --dim: rgba(246,236,220,.62);
+    --panel: rgba(28,22,18,.82);
+    --panel2: rgba(18,14,12,.9);
+    --line: rgba(246,236,220,.18);
+    --gold: #e8b96a;
+    --green: #7fd18a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #14100e; }
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", system-ui, sans-serif;
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+  }
+  canvas { display: block; }
+  #app { position: fixed; inset: 0; }
+  /* 注意：#hud 整层不吃鼠标（不然挡住第一人称视角的点击），
+     pointer-events 是**可继承**属性 —— 所以 HUD 里每一个要点的东西
+     都必须显式写回 pointer-events: auto，否则父级的 none 会一路继承下去，
+     卡片和按钮会变成"看得见、点不动"。 */
+  #hud { position: fixed; inset: 0; pointer-events: none; }
+  .card, .btn, .inst-btn, #song-list, #keys { pointer-events: auto; }
+
+  /* ---------------- 准星 ---------------- */
+  #cross { position: absolute; left: 50%; top: 50%; width: 26px; height: 26px; margin: -13px 0 0 -13px; }
+  #cross i {
+    position: absolute; left: 50%; top: 50%; width: 5px; height: 5px; margin: -2.5px 0 0 -2.5px;
+    border-radius: 50%; background: rgba(255,255,255,.75);
+  }
+  #cross b {
+    position: absolute; inset: 0; border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0); transition: border-color .12s, transform .12s;
+  }
+  #cross.on b { border-color: var(--gold); transform: scale(1.18); }
+  #cross.on i { background: var(--gold); }
+
+  #spot {
+    position: absolute; left: 50%; top: calc(50% + 34px); transform: translateX(-50%);
+    padding: 6px 12px; border-radius: 999px; white-space: nowrap;
+    background: var(--panel); border: 1px solid var(--line);
+    font-size: 14px; opacity: 0; transition: opacity .12s;
+  }
+  #spot.on { opacity: 1; }
+  #spot b { color: var(--gold); font-weight: 600; }
+
+  /* ---------------- 顶部 / 底部 ---------------- */
+  #top {
+    position: absolute; left: 0; right: 0; top: 0; padding: 12px 16px;
+    display: flex; align-items: flex-start; gap: 12px;
+  }
+  #inst {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 8px 14px; font-size: 15px; letter-spacing: .5px;
+  }
+  #inst small { display: block; color: var(--dim); font-size: 11px; letter-spacing: 0; margin-top: 2px; }
+  #scorebar {
+    flex: 1; max-width: 720px; margin: 0 auto;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 8px 12px; opacity: 0; transition: opacity .2s;
+  }
+  #scorebar.on { opacity: 1; }
+  #scorebar .title { font-size: 12px; color: var(--dim); margin-bottom: 6px; display: flex; justify-content: space-between; }
+  #keys { display: flex; gap: 6px; flex-wrap: wrap; }
+  #keys span {
+    min-width: 30px; text-align: center; padding: 3px 7px; border-radius: 7px;
+    background: rgba(255,255,255,.07); border: 1px solid transparent;
+    font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 14px;
+  }
+  #keys span.done { color: rgba(246,236,220,.35); }
+  #keys span.next { background: var(--gold); color: #2a1d10; border-color: #fff2d8; font-weight: 700; transform: translateY(-1px); }
+
+  #btns { display: flex; gap: 8px; }
+  .btn {
+    pointer-events: auto;
+    background: var(--panel); border: 1px solid var(--line); color: var(--ink);
+    border-radius: 10px; padding: 8px 12px; font-size: 13px; cursor: pointer;
+    transition: background .15s, transform .1s;
+  }
+  .btn:hover { background: rgba(60,48,38,.92); }
+  .btn:active { transform: translateY(1px); }
+  .btn.hide { display: none; }
+  .btn.primary { background: var(--gold); color: #2a1d10; border-color: #fff2d8; font-weight: 600; }
+
+  #hint {
+    position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
+    padding: 9px 18px; font-size: 15px; line-height: 1.45;
+    max-width: min(880px, 92vw); text-align: center;
+  }
+  #hint b { color: var(--gold); }
+  #hint .k {
+    display: inline-block; min-width: 22px; padding: 1px 6px; margin: 0 2px;
+    border-radius: 5px; background: rgba(255,255,255,.12);
+    font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px;
+  }
+
+  /* ---------------- 音分表 ---------------- */
+  #tuner {
+    position: absolute; left: 50%; top: calc(50% + 70px); transform: translateX(-50%);
+    background: var(--panel2); border: 1px solid var(--line); border-radius: 14px;
+    padding: 8px 10px 6px; text-align: center; opacity: 0; transition: opacity .18s;
+  }
+  #tuner.on { opacity: 1; }
+  #tuner canvas { display: block; }
+  #tuner .read { font-size: 13px; color: var(--dim); margin-top: -6px; }
+  #tuner .read b { color: var(--ink); font-size: 15px; }
+  #tuner .read b.ok { color: var(--green); }
+
+  /* ---------------- 卡片 ---------------- */
+  .card {
+    pointer-events: auto;
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
+    width: min(720px, 92vw); max-height: 92vh; overflow: auto;
+    background: var(--panel2); border: 1px solid var(--line); border-radius: 18px;
+    padding: 22px 26px; box-shadow: 0 24px 60px rgba(0,0,0,.55);
+    display: none;
+  }
+  .card.on { display: block; }
+  .card h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: 1px; }
+  .card h2 { font-size: 17px; margin: 18px 0 8px; }
+  .card p { margin: 6px 0; line-height: 1.7; color: var(--dim); font-size: 14px; }
+  .card ul { margin: 6px 0 0 18px; padding: 0; color: var(--dim); font-size: 14px; line-height: 1.8; }
+  .card ul b { color: var(--ink); }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+  .inst-btn {
+    pointer-events: auto;
+    flex: 1 1 150px; text-align: left; cursor: pointer;
+    background: rgba(255,255,255,.05); border: 1px solid var(--line);
+    border-radius: 14px; padding: 14px 16px; color: var(--ink); transition: all .15s;
+  }
+  .inst-btn:hover { background: rgba(232,185,106,.16); border-color: var(--gold); }
+  .inst-btn b { display: block; font-size: 18px; margin-bottom: 4px; }
+  .inst-btn span { font-size: 12px; color: var(--dim); }
+  .song-btn { flex: 1 1 130px; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 6px; background: rgba(255,255,255,.1); font-size: 12px; margin-left: 6px; }
+
+  #toast {
+    position: absolute; left: 50%; top: 84px; transform: translateX(-50%) translateY(-8px);
+    background: rgba(127,209,138,.16); border: 1px solid rgba(127,209,138,.5);
+    color: #d8ffe0; border-radius: 999px; padding: 7px 16px; font-size: 14px;
+    opacity: 0; transition: opacity .2s, transform .2s;
+  }
+  #toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* 没锁上鼠标时的提示：做成底部一条小横幅，别挡住画面正中（那是琴和准星所在） */
+  #lock {
+    position: absolute; left: 50%; bottom: 76px; transform: translateX(-50%);
+    background: var(--panel); border: 1px solid var(--gold); border-radius: 999px;
+    padding: 7px 16px; font-size: 14px; text-align: center; white-space: nowrap;
+  }
+  #lock.hide { display: none; }
+  #lock small { color: var(--dim); font-size: 12px; margin-left: 8px; }
+  #fps { position: absolute; right: 14px; bottom: 12px; font-size: 11px; color: rgba(246,236,220,.4); font-family: ui-monospace, monospace; }
+  #loading {
+    position: fixed; inset: 0; background: #14100e; display: flex; align-items: center;
+    justify-content: center; font-size: 15px; color: var(--dim); z-index: 20;
+  }
+  #loading.hide { display: none; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="hud">
+  <div id="top">
+    <div id="inst">小提琴<small>还没选乐器</small></div>
+    <div id="scorebar">
+      <div class="title"><span id="score-name">曲集</span><span id="score-info"></span></div>
+      <div id="keys"></div>
+    </div>
+    <div id="btns">
+      <button class="btn hide" id="btn-switch" title="快捷键 T">换乐器 T</button>
+      <button class="btn" id="btn-invert" title="快捷键 I">↕ 上下反向 I</button>
+      <button class="btn hide" id="btn-restart" title="快捷键 R">重来 R</button>
+    </div>
+  </div>
+
+  <div id="cross"><i></i><b></b></div>
+  <div id="spot"></div>
+
+  <div id="tuner">
+    <canvas id="tuner-canvas" width="260" height="120"></canvas>
+    <div class="read" id="tuner-read">—</div>
+  </div>
+
+  <div id="hint">正在准备…</div>
+  <div id="toast"></div>
+  <div id="fps"></div>
+
+  <div id="lock" class="hide">点一下画面锁定鼠标<small>或按住左键拖动转动视角 · Esc 释放</small></div>
+
+  <!-- 开场：选乐器（这一次点击也用来解锁浏览器音频） -->
+  <div class="card on" id="card-start">
+    <h1>提琴工坊</h1>
+    <p>先选一件乐器。接下来你会亲手给它<b>装弦</b>、<b>调音</b>、<b>上弓</b>，最后把琴拿起来拉一首。</p>
+    <div class="row">
+      <button class="inst-btn" data-inst="violin"><b>小提琴</b><span>G3 D4 A4 E5 · 琴身 356mm</span></button>
+      <button class="inst-btn" data-inst="viola"><b>中提琴</b><span>C3 G3 D4 A4 · 琴身 420mm</span></button>
+      <button class="inst-btn" data-inst="cello"><b>大提琴</b><span>C2 G2 D3 A3 · 琴身 760mm</span></button>
+    </div>
+    <p style="margin-top:14px">鼠标环视 · <span class="tag">W A S D 走动</span><span class="tag">滚轮凑近</span><span class="tag">左键交互</span><span class="tag">Esc 释放鼠标</span></p>
+  </div>
+
+  <!-- 结果页 -->
+  <div class="card" id="card-result">
+    <h1>你刚才亲手验证了四件事</h1>
+    <ul>
+      <li><b>弦越粗、越长 → 音越低</b>：最粗的那根是四根弦里最低的音。</li>
+      <li><b>弦越紧 → 音越高</b>：转弦轴就是在改张力，音高连续滑上去。</li>
+      <li><b>按弦位置决定音高</b>：手指按下去，有效弦长变短，音就变高。</li>
+      <li><b>触弦点决定音色</b>：同一个音，靠指板闷而柔，靠琴桥亮而紧。</li>
+    </ul>
+    <p id="result-extra"></p>
+    <h2>换一件更大的乐器，同样的旋律会怎样？</h2>
+    <div class="row">
+      <button class="inst-btn" data-inst="violin"><b>小提琴</b><span>最小 · 音最高</span></button>
+      <button class="inst-btn" data-inst="viola"><b>中提琴</b><span>大一点 · 低五度</span></button>
+      <button class="inst-btn" data-inst="cello"><b>大提琴</b><span>最大 · 低两个八度</span></button>
+    </div>
+    <div class="row"><button class="btn" id="result-close">继续演奏</button></div>
+  </div>
+
+  <!-- 曲集 -->
+  <div class="card" id="card-sheet">
+    <h1>曲集</h1>
+    <p>选一首，屏幕顶部会高亮下一个该按的键，按对了自动往下走。</p>
+    <div class="row" id="song-list"></div>
+    <div class="row">
+      <button class="btn" id="sheet-close">关上乐谱</button>
+      <button class="btn" id="sheet-auto">让它自己拉一遍</button>
+    </div>
+  </div>
+</div>
+
+<div id="loading">正在搭琴房…</div>
+
+<script src="src/vendor/three.min.js"></script>
+<script src="src/mathx.js"></script>
+<script src="src/textures.js"></script>
+<script src="src/violin.js"></script>
+<script src="src/bow.js"></script>
+<script src="src/room.js"></script>
+<script src="src/score.js"></script>
+<script src="src/audio.js"></script>
+<script src="src/game.js"></script>
+</body>
+</html>
